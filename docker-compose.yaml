@@ -1,0 +1,42 @@
+version: '3.0'
+services:
+  
+  fv_huawei_ftp_data:
+    container_name: fv_huawei_ftp_data
+    build: .
+    restart: always
+    volumes: # remember to replace /folder_on_disk/ with the path to where you want to store the files on the host machine
+      - "./ftp:/ftp"
+    image: viccenzo/fv_huawei_ftp_data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test $(find /tmp/heartbeat.txt -mmin -60)"]
+      interval: 900s
+      timeout: 10s
+      retries: 3
+
+  ftpd_server:
+    image: stilliard/pure-ftpd
+    container_name: huawei_ftp_server
+    ports:
+      - "21:21"
+      - "30000-30009:30000-30009"
+    volumes: # remember to replace /folder_on_disk/ with the path to where you want to store the files on the host machine
+      - "./ftp/data:/home/username/"
+      - "./ftp/passwd:/etc/pure-ftpd/passwd"
+# uncomment for ssl/tls, see https://github.com/stilliard/docker-pure-ftpd#tls
+#      - "/folder_on_disk/ssl:/etc/ssl/private/"
+# or ssl/tls with Let's Encrypt (cert and key as two files)
+#      - "/etc/letsencrypt/live/<your_server>/cert.pem:/etc/ssl/private/pure-ftpd-cert.pem"
+#      - "/etc/letsencrypt/live/<your_server>/privkey.pem:/etc/ssl/private/pure-ftpd-key.pem"
+    environment:
+      PUBLICHOST: "150.162.142.79"
+      FTP_USER_NAME: fotovoltaica
+      FTP_USER_PASS: fotovoltaica123
+      #FTP_USER_HOME: /home/username
+# also for ssl/tls:
+#      ADDED_FLAGS: "--tls=2"
+    restart: always
+
+
+  
+    
