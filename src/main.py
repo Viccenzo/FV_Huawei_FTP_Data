@@ -1,35 +1,15 @@
-import numpy as np
 import pandas as pd
 #import sqlalchemy
 from sqlalchemy import (
-    create_engine,
-    MetaData,
-    Table,
-    Column,
-    DateTime,
-    exists,
-    inspect,
-    text,
     Integer, 
-    String, 
     Float, 
     Boolean
 )
-from sqlalchemy.dialects import postgresql
-from sqlalchemy.types import VARCHAR
-from sqlalchemy.exc import ProgrammingError
-from sqlalchemy.dialects.postgresql import insert
-import time
-from datetime import datetime,timedelta
+import time as t
+from datetime import datetime,timedelta,time
 import mqtt_db_service as service
 import os
 import dotenv
-
-def createEngine():    
-    engine = create_engine(
-        "postgresql://fotovoltaica:fotovoltaica123@150.162.142.84/fotovoltaica", echo=False
-    )
-    return engine
 
 data = {}
 
@@ -53,93 +33,6 @@ def map_dtype(dtype):
         return Boolean
     else:
         return VARCHAR
-
-def insert_dataframe(engine, table_name, dataframe):
-
-    # Convert dataframe to dictionary format
-    records = dataframe.to_dict(orient='records')
-    
-    metadata = MetaData()
-    table = Table(table_name, metadata, autoload_with=engine)
-
-    with engine.connect() as conn:
-        with conn.begin():
-            for record in records:
-                stmt = insert(table).values(record)
-                stmt = stmt.on_conflict_do_nothing(index_elements=['TIMESTAMP']) 
-                conn.execute(stmt)
-
-def uploadToDB(engine, dataframe, table_name):
-    try:    #Try to incert data all at once (faster)
-        dataframe.to_sql(table_name, engine, if_exists='append', index=False)
-        print(f"Data successfully uploaded to {table_name} table!")
-    except: # Insert data with conflict handling (Slow)
-        print(f'primary key conflict, atempeting to insert data avoiding conflicts')
-        records = dataframe.to_dict(orient='records')
-
-        metadata = MetaData()
-        table = Table(table_name, metadata, autoload_with=engine)
-
-        with engine.connect() as conn:
-            with conn.begin():
-                for record in records:
-                    stmt = insert(table).values(record)
-                    stmt = stmt.on_conflict_do_nothing(index_elements=['TIMESTAMP'])
-                    conn.execute(stmt)
-
-# Function to check if a table exists inside the database
-def tableExists(tableName, engine):
-    ins = inspect(engine)
-    ret =ins.dialect.has_table(engine.connect(),tableName)
-    #print('Table "{}" exists: {}'.format(tableName, ret))
-    return ret
-
-# function to create a table on database
-def createTable(dataFrame, engine, tableName, column_types):
-    print(column_types)
-    metadata = MetaData()
-    table = Table(tableName, metadata, *(Column(name, column_types[name]) for name in column_types))
-    metadata.create_all(engine)
-
-# function that compare header between dataframe and databse to extract diferences
-def headerMismach(tableName, engine, dataFrame):
-    inspector = inspect(engine)
-    columns = inspector.get_columns(tableName)
-    column_names = [column['name'] for column in columns]
-    headers = dataFrame.columns.tolist()
-    missing_in_db = set(headers) - set(column_names)
-    return missing_in_db
-
-# function that adds missing columns present on pandas dataframe
-def addMissingColumn(missing_columns,engine,table_name,dataFrame):
-    metadata = MetaData()
-    for column_name in missing_columns:
-        column_types = {name: map_dtype(dtype) for name, dtype in dataFrame.dtypes.items()}
-        column_type = column_types[column_name]
-        print(column_type)
-        alter_statement = text(f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {column_type().compile(dialect=engine.dialect)}')
-        try:
-            with engine.connect() as conn:
-                with conn.begin():
-                    conn.execute(alter_statement)
-            print(f"column '{column_name}' sucessfully added")
-        except ProgrammingError as e:
-            print(f"Column creation error '{column_name}': {e}")
-
-def primaryKeyExists(engine, tableName):
-    metadata = MetaData()
-    inspector = inspect(engine)
-    primary_keys = inspector.get_pk_constraint(tableName)['constrained_columns']
-    return primary_keys
-
-def addPrimarykey(engine, tableName, keyName):
-    alter_statement = text(f'ALTER TABLE "{tableName}" ADD PRIMARY KEY ("{keyName}")')
-    try:
-        with engine.connect() as conn:
-            with conn.begin():
-                conn.execute(alter_statement)
-    except ProgrammingError as e:
-        print(f"Set primary key error: {e}")
 
 def check_for_changes(old_df, new_df):
     return not old_df.equals(new_df)
@@ -178,25 +71,19 @@ def parse_time(value):
 def healthCheck():
     # Código crítico
     with open('/tmp/heartbeat.txt', 'w') as f:
-        f.write(str(time.time()))  # Escreve o timestamp
+        f.write(str(t.time()))  # Escreve o timestamp
 
 # Coisas adicionadas para mandar pro servidor do Lucas
 #engine2 = create_engine(f'postgresql://fotovoltaica:TSAL6ujJn8pD7Nq@150.162.142.79/fotovoltaica', echo=False) # tirar depois
 
 dotenv.load_dotenv()
 brokers = os.getenv("MQTT_BROKER").split(',')
-service.initDBService(user=os.getenv("USER"), server1=brokers[0], server2=brokers[1])
+groupName = os.getenv("SERVICE_NAME")
+service.initDBService(user=os.getenv("USER"),service=groupName,server1=brokers[0], server2=brokers[1])
 ips = os.getenv("IPS").split(',')
 
 def main():
-    
-    # falta fazer o loop para pegar os dados do arquivo
-    # Faquer que nem o outro código que percebe a passagem do dia para pegar mais dados
-    # print(tables)
-
-    df_antigo = pd.read_csv('../ftp/data/init.csv')
     global data
-    engine = createEngine()
 
     print("start")
 
@@ -206,15 +93,18 @@ def main():
             print(f'Checking logger on ip: {ip}')
             # read current csv
             folder_terminator = ip.split(".")[3]
-            today = datetime.today() - timedelta(hours=2)
+            today = datetime.now().date()
+            today = datetime.combine(today, time(23, 59, 59))
+            print(today)
             try:
                 file_path = f'../ftp/data/HW{folder_terminator}/min{today.strftime("%Y%m%d")}.csv'
+                print(file_path)
                 with open(file_path, 'r') as file:
                     lines = file.readlines()
             except:
                 print("Newest File not found")
                 continue
-            
+
             #Utilizar a verificação se o arquivo mudou, caso não tenha mudado não tem pq fazer o processo (futuro)
             #tomorrow = today + timedelta(days=1)
             tables = table_check(ip,lines)
@@ -223,7 +113,7 @@ def main():
             ###
             for table in tables:
                 #check for the most recent stored data timestamp
-                server_timestamp = service.getLastTimestamp(table)
+                server_timestamp = service.getLastTimestamp(table,groupName)
                 
                 if server_timestamp is None:
                     server_timestamp = today - timedelta(days=30)
@@ -284,32 +174,32 @@ def main():
                     convert_to_numeric(df)
                     #column_types = {name: map_dtype(dtype) for name, dtype in df.dtypes.items()}
 
+                    print(logger_name)
+                    print(f'../ftp/data/HW{folder_terminator}/min{server_timestamp.strftime("%Y%m%d")}.csv')
+                    print(f'today : {today}')
+                    print(f'server_timestamp : {server_timestamp}')
+
                     #print("uploading data to database")
                     data = {}
                     data["df_data"] = df
                     data['loggerRequestBeginTime'] = datetime.now().isoformat()
                     data['loggerRequestEndTime'] = data['loggerRequestBeginTime']
-                    print(data['loggerRequestBeginTime'])
                     data['report'] = "Success"
                     if data["report"] == "Success":
-                        response = service.sendDF(data, table=logger_name)
+                        response = service.sendDF(data,logger_name,groupName)
                         print(response)
                         if response == "mqtt timeout":
                             print("Sending data to mqtt timeout")
-                        time.sleep(0.2)
+                        t.sleep(0.2)
                         healthCheck()
                     
-                    print(logger_name)
-                    print(f'../ftp/data/HW{folder_terminator}/min{server_timestamp.strftime("%Y%m%d")}.csv')
-                    print(f'today : {today}')
-                    print(f'server_timestamp : {server_timestamp}')
                     print(" ")
                     server_timestamp += timedelta(days=1)
 
                 ######
 
         print("Waiting 900s")
-        time.sleep(900)  
+        t.sleep(900)  
 
 main()
 

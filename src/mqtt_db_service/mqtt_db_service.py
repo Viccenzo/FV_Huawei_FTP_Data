@@ -23,10 +23,15 @@ def on_callback(client, userdata, msg):
     return_value = msg.payload
 
 def on_connect(client, userdata, flags, rc):
-    #print(f"Conectado com o código de resultado {rc}")
-    client.subscribe(f'message/{userdata}/#')  # Subscrição ao tópico passado via userdata
+    if rc == 0:
+        print("Conexão bem-sucedida")
+        user = userdata.get("user")
+        service_name = userdata.get("service_name")
+        client.subscribe(f'message/{user}/{service_name}/#')  # Subscrição ao tópico dinâmico
+    else:
+        print(f"Erro na conexão, código: {rc}")
 
-def initDBService(user,server1,server2):
+def initDBService(user,service,server1,server2):
     global client1
     global client2
     global topicUser
@@ -34,7 +39,7 @@ def initDBService(user,server1,server2):
     topicUser = user
 
     #client1
-    client1 = mqtt.Client(userdata=user)
+    client1 = mqtt.Client(userdata={"user": user, "service_name": service})
     mqtt_broker = server1 #"58296fae6ca74b90bda9fc67e3646310.s1.eu.hivemq.cloud"
     mqtt_port = 1883  #8883
     client1.connect(mqtt_broker, mqtt_port)
@@ -50,7 +55,7 @@ def initDBService(user,server1,server2):
     #client2.on_connect = on_connect
     #client2.loop_start()
 
-def sendDF(data,table):
+def sendDF(data,table,service):
     global client1
     global client2
     global topicUser
@@ -72,7 +77,7 @@ def sendDF(data,table):
     data['df_data'] = data['df_data'].to_json()
     #print(data)
     try:    
-        client1.publish(f'DB_INSERT/{user}/{table}', json.dumps(data), qos=1)
+        client1.publish(f'DB_INSERT/{user}/{service}/{table}', json.dumps(data), qos=1)
     except Exception as e:
         print(e)
         #client2.publish(f'DB_INSERT/{user}/{table}', json.dumps(data), qos=1)
@@ -87,7 +92,7 @@ def sendDF(data,table):
     return_value = None
     return (response)
 
-def getLastTimestamp(table):
+def getLastTimestamp(table,service):
     global client1
     global client2
     global topicUser
@@ -105,7 +110,7 @@ def getLastTimestamp(table):
         return ("user should be of type string")
     
     try:
-        client1.publish(f'DB_GERT_RECENT_ROW/{user}/{table}', "", qos=1)
+        client1.publish(f'DB_GERT_RECENT_ROW/{user}/{service}/{table}', "", qos=1)
     except:
         print("erro")
     timeoutCount = 0
@@ -120,6 +125,7 @@ def getLastTimestamp(table):
     response = response.decode('utf-8')
     response = response.strip('(),')
     response = response + ")"
+    print(response)
     try: 
         response = eval(response, {"datetime": datetime})
         return (response)
